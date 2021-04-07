@@ -1,16 +1,34 @@
-# This is a sample Python script.
+from typing import List
+# class Board:
+#     def __init__(self):
+#         #Port entrée sortie
+#         self.gpio: List[bool] = [False for i in range(16)]
+#         # assignation des ports :
+#         # 0 in, 1 out, 2 pullUp
+#         self.gpio_in_out: List[int] = [0 for i in range(16)]
+#
+#     def __str__(self):
+#         s = "|"
+#         for v in self.gpio:
+#             if v:
+#                 s+="1|"
+#             else:
+#                 s+="0|"
+#         return s
 
-# Press Maj+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 
+from machine import Pin, ADC, Board, print
+from time import sleep
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
-
-
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    b = Board()
+    p = Pin(2, Pin.IN)
+    a = ADC(0)
+    p1 = Pin(5, Pin.OUT)
+    while True:
+        if p1.value() == 1:
+            p1.value(0)
+        else:
+            p1.value(1)
+        print(b)
+        sleep(1)
