@@ -1,4 +1,4 @@
-from tkinter import Tk, ttk, messagebox
+from tkinter import Tk, ttk, messagebox,Canvas, NW
 from machine import *
 from time import sleep
 from threading import Thread
@@ -11,18 +11,19 @@ class Sim(Tk):
         self.thr = None
         self.geometry("480x360")
         self.title("Simulateur ESP8266")
+        photo = ImageTk.PhotoImage(file="esp8266.jpg")  # Nécessaire pour travailler avec différents types d'images
+        canevas = Canvas(self, width=photo.width(), height=photo.height())
+        canevas.config(height=photo.height(),
+                       width=photo.width())  # Règle la taille du canvas par rapport à la taille de l'image
+        canevas.create_image(0, 0, anchor=NW,
+                             image=photo)  # Règle l'emplacement du milieu de l'image, ici dans le coin Nord Ouest (NW) de la fenetre
+        canevas.pack()
         self.label = ttk.Label(self, text="bonjour les amis")
         self.label.pack()
         ttk.Button(self, text="Entree", command=self.on).pack()
         ttk.Button(self, text="Run", command=self.start).pack()
         ttk.Button(self, text="Stop", command=self.stop).pack()
-        photo = ImageTk.PhotoImage(file="esp8266.jpg")  # Nécessaire pour travailler avec différents types d'images
-        canevas = Tk.Canvas(self, width=photo.size[0], height=photo.size[1])
-        canevas.config(height=photo.height(),
-                       width=photo.width())  # Règle la taille du canvas par rapport à la taille de l'image
-        canevas.create_image(0, 0, anchor=Tk.NW,
-                             image=photo)  # Règle l'emplacement du milieu de l'image, ici dans le coin Nord Ouest (NW) de la fenetre
-        canevas.pack()
+
 
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
