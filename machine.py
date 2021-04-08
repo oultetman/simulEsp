@@ -29,8 +29,9 @@ RTC_WAKE = ...  # type: int
 
 class Board:
     gpio: List['Pin'] = []
+
     def __init__(self):
-        #Port entrée sortie
+        # Port entrée sortie
         self.gpio: List[Pin] = []
         # assignation des ports :
         # 0 in, 1 out, 2 pullUp
@@ -40,21 +41,32 @@ class Board:
         s = "|"
         for v in Board.gpio:
             if v:
-                if v._mode==Pin.IN:
-                    s+=f"{v.id} IN |"
-                elif v._mode==Pin.OUT:
-                    s+=f"{v.id} OUT|"
+                if v._mode == Pin.IN:
+                    s += f"{v.id} IN |"
+                elif v._mode == Pin.OUT:
+                    s += f"{v.id} OUT|"
                 else:
-                    s+=f"  {v.id}  |"
-        s+="\n"
-        s+='-'*(len(Board.gpio)*6+1)+"\n|"
+                    s += f"  {v.id}  |"
+        s += "\n"
+        s += '-' * (len(Board.gpio) * 6 + 1) + "\n|"
         for v in Board.gpio:
             if v:
-                s+=f"{v.value():^5}|"
+                s += f"{v.value():^5}|"
         return s
 
-    def add(pin:'Pin'):
-        Board.gpio.append(pin)
+    def search_pin(id: int) -> int:
+        for i, p in enumerate(Board.gpio):
+            if p.id == id:
+                return i
+        return -1
+
+    def add(pin: 'Pin'):
+        index = Board.search_pin(pin.id)
+        if index == -1:
+            Board.gpio.append(pin)
+        else:
+            Board.gpio[index]=pin
+
 
 class Pin(object):
     """A pin object is used to control I/O pins (also known as GPIO - general-purpose
