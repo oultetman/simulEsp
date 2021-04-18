@@ -13,7 +13,8 @@ IDs >= 0 and “virtual” devices with negative IDs like -1 (these
 and real hardware interrupts).
 """
 
-from typing import Callable, Optional, Collection, Union, Any, List
+from typing import Callable, Optional, Collection, Union, Any, List, Union
+from time import sleep
 
 IDLE = ...  # type: int
 SLEEP = ...  # type: int
@@ -26,9 +27,23 @@ DEEPSLEEP_RESET = ...  # type: int
 PIN_WAKE = ...  # type: int
 RTC_WAKE = ...  # type: int
 
+def sleep_ms(miliseconds : int):
+    sleep(miliseconds/1000)
+
+def sleep_ns(nanoseconds:int):
+    sleep(nanoseconds / 1000000)
 
 class Board:
     gpio: List['Pin'] = []
+    gpio_port:List[int]=[]
+    run: bool = False
+    wifi: bool = False
+    pwm: bool = False
+    pwm_chanel: List['PWM'] = []
+    irq: bool = False
+    i2c_slaves: List['I2C'] = []
+    i2c_address: int = 0
+    i2c_datas: List[bytearray] = []
 
     def __init__(self):
         # Port entrée sortie
@@ -54,18 +69,40 @@ class Board:
                 s += f"{v.value():^5}|"
         return s
 
-    def search_pin(id: int) -> int:
-        for i, p in enumerate(Board.gpio):
-            if p.id == id:
-                return i
+    def search_pin(pin_list: List[Union['Pin', 'PWM']], id: int) -> int:
+        if len(pin_list) > 0:
+            if isinstance(pin_list[0], Pin):
+                for i, p in enumerate(pin_list):
+                    if p.id == id:
+                        return i
+            else:
+                for i, p in enumerate(pin_list):
+                    if p.pin.id == id:
+                        return i
         return -1
 
-    def add(pin: 'Pin'):
-        index = Board.search_pin(pin.id)
-        if index == -1:
-            Board.gpio.append(pin)
+    def value_By_pin(id_pin: int) -> int:
+        index = Board.search_pin(Board.gpio, id_pin)
+        if index != -1:
+            return Board.gpio[index].value()
         else:
-            Board.gpio[index]=pin
+            return -1
+
+    def add(pin_list: List[Union['Pin', 'PWM']], pin: Union['Pin', 'PWM']):
+        if isinstance(pin, Pin):
+            index = Board.search_pin(pin_list, pin.id)
+        else:
+            index = Board.search_pin(pin_list, pin.pin.id)
+        if index == -1:
+            pin_list.append(pin)
+        else:
+            pin_list[index] = pin
+
+    def add_gpio(pin: 'Pin'):
+        Board.add(Board.gpio, pin)
+
+    def add_pwm(pwm: 'PWM'):
+        Board.add(Board.pwm_chanel, pwm)
 
 
 class Pin(object):
@@ -105,7 +142,7 @@ Usage Model::
     p0.irq(lambda p:print(p))
     """
 
-    IRQ_FALLING = 1  # type: int
+    IRQ_FALLING = 0  # type: int
     IRQ_RISING = 1  # type: int
     IRQ_LOWLEVEL = 0  # type: int
     IRQ_HIGHLEVEL = 1  # type: int
@@ -180,16 +217,19 @@ Usage Model::
    by calling the constructor or :meth:`Pin.init` method.  If a pin that is configured in
    alternate-function mode is re-initialised with ``Pin.IN``, ``Pin.OUT``, or
    ``Pin.OPEN_DRAIN``, the alternate function will be removed from the pin.        """
+        self.irq_enable = False
+        self.trigger = None
+        self.handle = None
+        self.front = -1
         self.id = id
-        if value == 0 or value == 1:
-            self._value = value
-        else:
-            self._value = 0
+        self._last_value = None
+        self._value = 0
         self._drive = drive
         self._alt = alt
         self._mode = mode
         self._pull = pull
-        Board.add(self)
+        self.value(value)
+        Board.add_gpio(self)
 
     def init(self, value: int, drive: int, alt: int, mode: int = -1, pull: int = -1) -> None:
         """Re-initialise the pin using the given parameters. Only those arguments
@@ -229,7 +269,12 @@ Usage Model::
             if self._mode == 0 or self._mode == 1:
                 return self._value
             return 0
-        elif x == 0 or x == 1:
+        elif self._value != x and (x == 0 or x == 1):
+            if self._last_value == 0:
+                self.front = 1
+            else:
+                self.front = 0
+            self._last_value = self._value
             self._value = x
 
     def __call__(self, x: Optional[int]) -> Optional[int]:
@@ -245,17 +290,24 @@ Usage Model::
     def on(self) -> None:
         """Set pin to “1” output level."""
         if self._mode == Pin.OUT:
-            self._value = 1
+            self.value(1)
 
     def off(self) -> None:
         """Set pin to “0” output level."""
         if self._mode == Pin.OUT:
-            self._value = 0
+            self.value(0)
 
     def _set(self, value: int):
-        self._value = value
+        self.value(value)
 
-    def mode(self, mode: Optional[int]) -> Optional[int]:
+    def toggle(self):
+        if self._mode == Pin.IN:
+            if self.value() == 0:
+                self._set(1)
+            else:
+                self._set(0)
+
+    def mode(self, mode: Optional[int] = None) -> Optional[int]:
         """Get or set the pin mode.
 
         **mode** can be one of following values:
@@ -273,6 +325,10 @@ Usage Model::
         :param mode: Mode to be set on a pin.
         :return: Current mode on a pin.
         """
+        if mode is None:
+            return self._mode
+        else:
+            self._mode = mode
 
     def pull(self, pull: Optional[int]) -> Optional[int]:
         """Get or set the pin pull state.
@@ -286,7 +342,7 @@ Usage Model::
         :param pull: Pull state.
         :return: Current pull state.
         """
-        ...
+        pass
 
     def irq(self, handler: Callable[['Pin'], Any] = None, trigger: int = (IRQ_FALLING | IRQ_RISING),
             priority: int = 1, wake: int = None) -> Callable[['Pin'], Any]:
@@ -324,7 +380,10 @@ Usage Model::
         :param wake: Power mode in which this interrupt can wake up the system
         :return: Callback object.
         """
-        ...
+        self.handler = handler
+        self.trigger = trigger
+        Board.irq = True
+        self.irq_enable = True
 
     def __str__(self):
         return str(self.value())
@@ -337,7 +396,7 @@ class Signal(object):
         :param pin_obj: Existing Pin object.
         :param invert: If True, the signal will be inverted (active low).
         """
-        ...
+        pass
 
     def value(self, x: Optional[bool]) -> None:
         """This method allows to set and get the value of the signal, depending
@@ -361,15 +420,15 @@ class Signal(object):
         :return: Signal level.
         :rtype: int
         """
-        ...
+        pass
 
     def on(self) -> None:
         """Activate signal."""
-        ...
+        pass
 
     def off(self) -> None:
         """Deactivate signal."""
-        ...
+        pass
 
 
 class UART(object):
@@ -391,11 +450,11 @@ class UART(object):
         :param timeout: Timeout waiting for first char (in ms).
         :param timeout_char: Timeout waiting between chars (in ms).
         """
-        ...
+        pass
 
     def deinit(self) -> None:
         """Turn off the UART bus."""
-        ...
+        pass
 
     def any(self) -> int:
         """Returns an integer counting the number of characters that can be read
@@ -405,7 +464,7 @@ class UART(object):
 
         :return: Number of characters that can be read without blocking.
         """
-        ...
+        pass
 
     def read(self, nbytes: Optional[int]) -> bytes:
         """Read characters. If ``nbytes`` is specified then read at most that many
@@ -414,7 +473,7 @@ class UART(object):
         :param nbytes: Upper limit on number of read characters.
         :return: Bytes read in.
         """
-        ...
+        pass
 
     def readinto(self, buf: bytearray, nbytes: Optional[int]) -> Optional[int]:
         """Read bytes into the ``buf``. If ``nbytes`` is specified then read at most
@@ -424,14 +483,14 @@ class UART(object):
         :param nbytes: Upper limit on number of read characters.
         :return: Number of bytes read in.
         """
-        ...
+        pass
 
     def readline(self) -> Optional[bytes]:
         """Read a line, ending in a newline character.
 
         :return: The line read or ``None`` on timeout.
         """
-        ...
+        pass
 
     def write(self, buf: bytearray) -> Optional[int]:
         """
@@ -440,7 +499,7 @@ class UART(object):
         :param buf: Data that needs to be written.
         :return: Number of bytes written or ``None`` on timeout.
         """
-        ...
+        pass
 
     def sendbreak(self) -> None:
         """
@@ -467,7 +526,7 @@ class SPI(object):
 
         :param id: Bus ID.
         """
-        ...
+        pass
 
     def init(self, baudrate: int = 1000000, polarity: int = 0, phase: int = 0,
              bits: int = 8, firstbit: int = MSB, sck: Optional[Pin] = None,
@@ -484,11 +543,11 @@ class SPI(object):
         :param mosi: MOSI pin.
         :param miso: MISO pin.
         """
-        ...
+        pass
 
     def deinit(self) -> None:
         """Turn off the SPI bus."""
-        ...
+        pass
 
     def read(self, nbytes: int, write: int = 0x00) -> bytes:
         """Read a number of bytes specified by ``nbytes`` while continuously
@@ -499,20 +558,20 @@ class SPI(object):
         :param write: Value to continiously write while reading data.
         :return: Bytes read in.
         """
-        ...
+        pass
 
     def readinto(self, buf: bytearray, write: int = 0x00) -> None:
         """Read into the buffer specified by ``buf`` while continuously writing
         the single byte given by ``write``.
         """
-        ...
+        pass
 
     def write(self, buf: bytes) -> None:
         """Write the bytes contained in ``buf``.
 
         :param buf: Bytes to write.
         """
-        ...
+        pass
 
     def write_readinto(self, write_buf: bytearray, read_buf: bytearray) -> None:
         """Write the bytes from ``write_buf`` while reading into ``read_buf``. The
@@ -522,7 +581,7 @@ class SPI(object):
         :param write_buf: Buffer to read data into.
         :param read_buf: Buffer to write data from.
         """
-        ...
+        pass
 
 
 class I2C(object):
@@ -534,7 +593,11 @@ class I2C(object):
         :param sda: Pin object specifying the pin to use for SDA.
         :param freq: Maximum frequency for SCL.
         """
-        ...
+        self.sda = sda
+        self.scl = scl
+        self.freq = freq
+        self.id = id
+        Board.i2c_slaves.append(self)
 
     def init(self, scl: Pin, sda: Pin, *, freq: int = 400000) -> None:
         """
@@ -544,22 +607,24 @@ class I2C(object):
         :param sda: Pin object specifying the pin to use for SDA.
         :param freq: Maximum frequency for SCL.
         """
-        ...
+        self.sda = sda
+        self.scl = scl
+        self.freq = freq
 
     def scan(self) -> Collection[int]:
         """Scan all I2C addresses between *0x08* and *0x77* inclusive and return a
         list of those that respond. A device responds if it pulls the SDA
         line low after its address (including a write bit) is sent on the bus.
         """
-        ...
+        return [i2c.id for i2c in Board.i2c_slaves]
 
     def start(self) -> None:
         """Generate a START condition on the bus (SDA transitions to low while SCL is high)."""
-        ...
+        pass
 
     def stop(self) -> None:
         """Generate a STOP condition on the bus (SDA transitions to high while SCL is high)."""
-        ...
+        pass
 
     def readinto(self, buf: bytearray, nack: bool = True) -> None:
         """Reads bytes from the bus and stores them into ``buf``. The number of bytes
@@ -572,7 +637,7 @@ class I2C(object):
         :param buf: Buffer to read bytes into.
         :param nack: If true, then NACK will be sent after reading last bytes.
         """
-        ...
+        return Board.i2c_datas
 
     def write(self, buf: bytearray) -> None:
         """Write the bytes from ``buf`` to the bus. Checks that an **ACK** is received
@@ -582,6 +647,7 @@ class I2C(object):
 
         :param buf: Buffer to write bytes from.
         """
+        pass
 
     def readfrom(self, addr: int, nbytes: int, stop: bool = True) -> bytes:
         """Read ``nbytes`` from the slave specified by ``addr``.
@@ -591,7 +657,7 @@ class I2C(object):
         :param stop: If true, then STOP condition is generated at the end of the transfer.
         :return: Data read.
         """
-        ...
+        pass
 
     def readfrom_into(self, addr: int, buf: bytearray, stop: bool = True) -> None:
         """Read into ``buf`` from the slave specified by ``addr``. The number of
@@ -602,7 +668,7 @@ class I2C(object):
         :param buf: Buffer for storing read data.
         :param stop: If true, then STOP condition is generated at the end of the transfer.
         """
-        ...
+        pass
 
     def writeto(self, addr: int, buf: bytearray, stop: bool = True) -> None:
         """Write the bytes from ``buf`` to the slave specified by ``addr``. If a **NACK** is
@@ -615,7 +681,7 @@ class I2C(object):
         :param stop: If true, then STOP condition is generated at the end of the transfer.
         :return: Number of ACKs that were received.
         """
-        ...
+        Board.i2c_datas.append(bytearray([addr+1])+buf)
 
     def readfrom_mem(self, addr: int, memaddr: int, addrsize: int = 8) -> bytes:
         """Read ``nbytes`` from the slave specified by ``addr`` starting from the memory
@@ -627,7 +693,7 @@ class I2C(object):
         :param addrsize: Address size in bits.
         :return: Data that has been read.
         """
-        ...
+        pass
 
     def readfrom_mem_into(self, addr: int, memaddr: int, buf, *, addrsize=8) -> None:
         """Read into ``buf`` from the slave specified by addr starting from the memory
@@ -641,7 +707,7 @@ class I2C(object):
         :param buf: Buffer to store read data.
         :param addrsize: Address size in bits.
         """
-        ...
+        pass
 
     def writeto_mem(self, addr: int, memaddr: int, *, addrsize=8) -> None:
         """Write ``buf`` to the slave specified by ``addr`` starting from the
@@ -653,7 +719,7 @@ class I2C(object):
         :param memaddr: Memory address location on a slave device to write into.
         :param addrsize: Address size in bits.
         """
-        ...
+        pass
 
 
 class RTC(object):
@@ -662,7 +728,7 @@ class RTC(object):
 
         :param id: ID of RTC device.
         """
-        ...
+        pass
 
     def init(self, datetime: tuple) -> None:
         """Initialise the RTC. Datetime is a tuple of the form:
@@ -671,18 +737,18 @@ class RTC(object):
 
         :param datetime: Tuple with information regarding desired initial date.
         """
-        ...
+        pass
 
     def now(self) -> tuple:
         """Get get the current datetime tuple.
 
         :return: Current datetime tuple.
         """
-        ...
+        pass
 
     def deinit(self) -> None:
         """Resets the RTC to the time of January 1, 2015 and starts running it again."""
-        ...
+        pass
 
     def alarm(self, id: int, time: Union[int, tuple], *, repeat: bool = False) -> None:
         """Set the RTC alarm. Time might be either a millisecond value to program the
@@ -694,7 +760,7 @@ class RTC(object):
         :param time: Either timestamp in milliseconds or datetime tuple, describing desired moment in the future.
         :param repeat: Make alarm periodic, if time passed as milliseconds.
         """
-        ...
+        pass
 
     def alarm_left(self, alarm_id: int = 0) -> int:
         """
@@ -704,7 +770,7 @@ class RTC(object):
         :return: Tumber of milliseconds left before the alarm expires.
         :rtype: int
         """
-        ...
+        pass
 
     def cancel(self, alarm_id: int = 0) -> None:
         """
@@ -712,7 +778,7 @@ class RTC(object):
 
         :param alarm_id: Alarm ID.
         """
-        ...
+        pass
 
     def irq(self, *, trigger: int, handler: Callable = None, wake: int = IDLE) -> None:
         """
@@ -722,7 +788,7 @@ class RTC(object):
         :param handler: Function to be called when the callback is triggered.
         :param wake: Sleep mode from where this interrupt can wake up the system.
         """
-        ...
+        pass
 
     ALARM0 = ...  # type: int
 
@@ -757,12 +823,37 @@ class Timer(object):
         """
         Deinitialises the timer. Stops the timer, and disables the timer peripheral.
         """
-        ...
+        pass
+
+
+class PWM:
+    frequence: int = 1
+
+    def __init__(self, pin: Pin, **kwargs):
+        self.pin = pin
+        self.pin.mode(Pin.OUT)
+        self.pin.value(1)
+        self._duty = None
+        self.duty(kwargs.get('duty', 512))
+        self.freq(kwargs.get('freq', PWM.frequence))
+        self.maxi = 10000 * self.duty() / 1023 / PWM.frequence
+        Board.add_pwm(self)
+
+    def freq(self, value: int = None):
+        if value is None: return PWM.frequence
+        if 1 <= value <= 1000:
+            PWM.frequence = value * 90
+
+    def duty(self, value: int = None):
+        if value is None:
+            return self._duty
+        if 0 <= value <= 1023:
+            self._duty = value
 
 
 def reset() -> None:
     """Resets the device in a manner similar to pushing the external RESET button."""
-    ...
+    pass
 
 
 def reset_cause() -> int:
@@ -777,7 +868,7 @@ def reset_cause() -> int:
     :return: Reset cause.
     :rtype: int
     """
-    ...
+    pass
 
 
 def disable_irq() -> int:
@@ -789,7 +880,7 @@ def disable_irq() -> int:
     :return: Previous IRQ state.
     :rtype: int
     """
-    ...
+    pass
 
 
 def enable_irq(state: int) -> None:
@@ -798,7 +889,7 @@ def enable_irq(state: int) -> None:
 
     :param state: IRQ state, previously returned from ``disable_irq`` function.
     """
-    ...
+    pass
 
 
 def freq() -> int:
@@ -814,13 +905,6 @@ def idle() -> None:
     during short or long periods. Peripherals continue working and execution
     resumes as soon as any interrupt is triggered (on many ports this includes
     system timer interrupt occurring at regular intervals on the order of millisecond).
-    """
-
-
-def sleep() -> None:
-    """Stops the CPU and disables all peripherals except for WLAN. Execution is
-    resumed from the point where the sleep was requested. For wake up to
-    actually happen, wake sources should be configured first.
     """
 
 
@@ -842,7 +926,7 @@ def wake_reason() -> int:
 
     :return: Wake reason.
     """
-    ...
+    pass
 
 
 def unique_id() -> bytearray:
@@ -853,7 +937,7 @@ def unique_id() -> bytearray:
     a short ID). In some MicroPython ports, ID corresponds to the network MAC address.
     :return: Unique identifier of a board/SoC.
     """
-    ...
+    pass
 
 
 def time_pulse_us(pin: Pin, pulse_level: int, timeout_us: int = 1000000) -> int:
@@ -877,7 +961,7 @@ def time_pulse_us(pin: Pin, pulse_level: int, timeout_us: int = 1000000) -> int:
     :param timeout_us: Duration of wait for pin change conditions, in microsecond.
     :return: Result code (-1 or -2)
     """
-    ...
+    pass
 
 
 class ADC:
