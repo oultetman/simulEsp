@@ -1,11 +1,14 @@
+
 from typing import Tuple
 from tkinter import Tk, ttk, messagebox, Canvas, NW, Menu
+from tkinter.tix import *
 from tkinter.font import Font
 from machine import *
 from time import sleep
 from threading import Thread
 from PIL import Image, ImageTk
 from wemos import Wemos
+from servomoteur import *
 from main import *
 
 
@@ -180,12 +183,13 @@ class Chronogramme(Canvas):
     def __init__(self, master):
         super().__init__(master)
         self.configure(width=1010, height=100)
-        self.create_rectangle(3,3,1010,100)
-        for i in range(1,len(self.master.enregistrement.memory)):
-            self.create_line(i-1+3, self.map(self.master.enregistrement.memory[i-1][6]), i+3, self.map(self.master.enregistrement.memory[i][6]), width=1)
+        self.create_rectangle(3, 3, 1010, 100)
+        for i in range(1, len(self.master.enregistrement.memory)):
+            self.create_line(i - 1 + 3, self.map(self.master.enregistrement.memory[i - 1][6]), i + 3,
+                             self.map(self.master.enregistrement.memory[i][6]), width=1)
 
-    def map(self ,value):
-        return value*80+10
+    def map(self, value):
+        return value * 80 + 10
 
 
 class Enregistreur:
@@ -239,21 +243,18 @@ class Sim(Tk):
         ajouter.add_cascade(label='Ecran i2c', menu=ajouter_ecran)
         ajouter_ecran.add_command(label="Ecran 2004 0x38", command=self.ajouter_ecran_2004)
         ajouter_ecran.add_command(label="Ecran 1602 0x20", command=self.ajouter_ecran_1602)
-        ajouter.add_cascade(label='Ajouter Rich Field')
-        ajouter.add_cascade(label='servo moteur')
-        ajouter.add_cascade(label='gbf')
-        ajouter.add_cascade(label='chronogrammes', command=lambda: Chronogramme(self).pack())
+        # ajouter.add_cascade(label='Ajouter Rich Field')
+        ajouter.add_cascade(label='servo moteur', command=self.ajouter_servo)
+        # ajouter.add_cascade(label='gbf')
+        #        ajouter.add_cascade(label='chronogrammes', command=lambda: Chronogramme(self).pack())
         self.thr = None
         self.pwm = None
         self.irq = None
-        # self.geometry("512x500")
-        self.title("Simulateur ESP8266")
-
-        # self.label = ttk.Label(self, text="bonjour les amis")
-        # self.label.pack()
-        # ttk.Button(self, text="Entree", command=self.on).pack()
-        ttk.Button(self, text="Run", command=self.start).pack()
-        ttk.Button(self, text="Stop", command=self.stop).pack()
+        self.title("Simulateur ESP8266 : Arrêt")
+        self.bp_run = ttk.Button(self, text="Run", command=self.start)
+        self.bp_stop = ttk.Button(self, text="Stop", command=self.stop, state="disabled")
+        self.bp_run.pack()
+        self.bp_stop.pack()
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.photo = ImageTk.PhotoImage(Image.open("esp8266wemos.png"))
@@ -264,8 +265,16 @@ class Sim(Tk):
         # self.ecran1 = Screen(self, "1602", "green", 0x20)
         # self.ecran1.pack()
         self.canevas.bind('<Button-1>', self.on_click_bp1)
-        self.enregistrement = Enregistreur(10, 1000)
+        # self.enregistrement = Enregistreur(10, 1000)
+        self.servo: Union[AllServo, None] = None
+
         self.refresh()
+
+    def ajouter_servo(self):
+        if self.servo is None:
+            self.servo = AllServo(self)
+            self.servo.pack()
+        self.servo.add_servo()
 
     def ajouter_ecran_2004(self):
         Screen(self, "2004", "blue", 0x38).pack()
@@ -281,6 +290,10 @@ class Sim(Tk):
 
     def refresh(self):
         self.w.refresh()
+        if self.thr is not None and not self.thr.get_etat():
+            self.bp_run["state"] = "normal"
+            self.bp_stop["state"] = "disabled"
+            self.title("Simulateur ESP8266 : Arrêt")
         self.after(1, self.refresh)
 
     def enregistre(self):
@@ -289,21 +302,29 @@ class Sim(Tk):
             self.after(self.enregistrement.delta_time_ms, self.enregistre)
 
     def start(self):
-        self.thr = MonThread()
+        self.thr = MonThread(self)
         self.pwm = Pwm()
         self.irq = IrqDetect()
         self.thr.start()
+        while self.thr.get_etat() is False:
+            sleep_ms(10)
         self.pwm.start()
         self.irq.start()
-        self.enregistrement.run()
-        sleep(1)
-        self.enregistre()
+
+        if self.servo is not None:
+            for sf in self.servo.children.values():
+                sf.servo.inspect_pwm()
+        # self.enregistrement.run()
+        #
+        # self.enregistre()
 
     def stop(self):
-        self.thr.stop()
         self.pwm.stop()
         self.irq.stop()
-        self.enregistrement.stop()
+        while self.pwm.get_etat() or self.irq.get_etat():
+            sleep_ms(10)
+        self.thr.stop()
+        # self.enregistrement.stop()
 
     def on_close(self):
 
@@ -311,8 +332,11 @@ class Sim(Tk):
         close = messagebox.askokcancel("Close", "Would you like to close the program?")
         if close:
             if self.thr is not None:
-                self.thr.stop()
                 self.pwm.stop()
+                self.irq.stop()
+                self.thr.stop()
+                while self.thr.get_etat():
+                    sleep_ms(10)
             self.destroy()
 
     def states(self):
@@ -320,19 +344,30 @@ class Sim(Tk):
 
 
 class MonThread(Thread):
-    def __init__(self):
+    def __init__(self, master):
         Thread.__init__(self)
         self._etat = True
+        self.master = master
 
     def run(self):
         print("depart esp")
+        self.master.bp_stop["state"] = "normal"
+        self.master.bp_run["state"] = "disabled"
+        self.master.title("Simulateur ESP8266 : Run")
+        self._etat = True
         Board.run = True
         main()
         print("arret esp")
+        self._etat = False
 
     def stop(self):
-        self._etat = False
         Board.run = False
+        Board.init()
+        self.master.bp_stop["state"] = "disabled"
+        self.master.title("Simulateur ESP8266 : Attente de l'arrêt")
+
+    def get_etat(self):
+        return self._etat
 
 
 class Pwm(Thread):
@@ -354,6 +389,9 @@ class Pwm(Thread):
     def stop(self):
         self._etat = False
         Board.pwm = False
+
+    def get_etat(self):
+        return self._etat
 
 
 class IrqDetect(Thread):
@@ -377,7 +415,11 @@ class IrqDetect(Thread):
         self._etat = False
         Board.pwm = False
 
+    def get_etat(self):
+        return self._etat
+
 
 if __name__ == '__main__':
     f = Sim()
+    tip = Balloon(f)
     f.mainloop()

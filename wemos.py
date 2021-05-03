@@ -1,7 +1,7 @@
 from typing import Tuple
 from machine import *
 from tkinter import *
-
+from tkinter.tix import *
 
 class Visu_led:
     def __init__(self, canvas: Canvas, x: int, y: int, largeur: int, hauteur: int):
@@ -11,7 +11,7 @@ class Visu_led:
         self.largeur = largeur
         self.hauteur = hauteur
         self.led = None
-        self.states_color = ['red', 'green', 'gray']
+        self.states_color = ['green', 'lawn green', 'gray']
         self.add_canavas()
 
     def add_canavas(self):
@@ -40,7 +40,10 @@ class Wemos:
         self.leds += [Visu_led(canevas, 314 - i * 14, 7, 10, 10) for i in range(6, 16) if i not in [12, 13]]
         self.leds += [BoardLed(canevas, 183, 179, 10, 5)]
         self.leds_board = [BoardLed(canevas, 183, 145, 10, 5), BoardLed(canevas, 343, 201, 5, 10)]
-
+        self.tip = Balloon(self.canevas)
+        self.tip.bind(self.leds[0].led, balloonmsg='bonjour')
+        # for i,t in enumerate(self.tips):
+        #     t.bindtags(self.leds[i].led, balloonmsg='boujour')
     def add_canevas(self):
         for l in self.leds:
             l.add_canavas()
@@ -55,7 +58,7 @@ class Wemos:
     def refresh(self):
         for i, p in enumerate(self.pins):
             valeur = Board.value_By_pin(p)
-            if valeur == 2:
+            if valeur == 2 or not Board.run:
                 self.leds[i].out(2)
             else:
                 self.leds[i].out(valeur)
@@ -72,6 +75,8 @@ class Wemos:
                 pwm.pin.on()
             else:
                 pwm.pin.off()
+        if len(Board.pwm_chanel) > 0 and self.canevas.master.servo is not None:
+            self.canevas.master.servo.inspect(True)
 
     def toggle_entry(self, id_pin: int):
         index = Board.search_pin(Board.gpio, id_pin)

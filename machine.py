@@ -33,6 +33,9 @@ def sleep_ms(miliseconds : int):
 def sleep_ns(nanoseconds:int):
     sleep(nanoseconds / 1000000)
 
+def run():
+    return Board.run
+
 class Board:
     gpio: List['Pin'] = []
     gpio_port:List[int]=[]
@@ -44,6 +47,19 @@ class Board:
     i2c_slaves: List['I2C'] = []
     i2c_address: int = 0
     i2c_datas: List[bytearray] = []
+
+    @classmethod
+    def init(cls):
+        cls.gpio: List['Pin'] = []
+        cls.gpio_port: List[int] = []
+        cls.run: bool = False
+        cls.wifi: bool = False
+        cls.pwm: bool = False
+        cls.pwm_chanel: List['PWM'] = []
+        cls.irq: bool = False
+        cls.i2c_slaves: List['I2C'] = []
+        cls.i2c_address: int = 0
+        cls.i2c_datas: List[bytearray] = []
 
     def __init__(self):
         # Port entrée sortie
@@ -142,8 +158,8 @@ Usage Model::
     p0.irq(lambda p:print(p))
     """
 
-    IRQ_FALLING = 0  # type: int
-    IRQ_RISING = 1  # type: int
+    IRQ_FALLING = 1  # type: int
+    IRQ_RISING = 0# type: int
     IRQ_LOWLEVEL = 0  # type: int
     IRQ_HIGHLEVEL = 1  # type: int
     IN = 0  # type: int
@@ -840,7 +856,7 @@ class PWM:
         Board.add_pwm(self)
 
     def freq(self, value: int = None):
-        if value is None: return PWM.frequence
+        if value is None: return PWM.frequence//90
         if 1 <= value <= 1000:
             PWM.frequence = value * 90
 
